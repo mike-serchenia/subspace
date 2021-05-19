@@ -1,8 +1,8 @@
-#!/usr/bin/env sh
-set -o errexit
-set -o nounset
-set -o pipefail
-set -o xtrace
+#!/usr/bin/env bash
+# set -o errexit
+# set -o nounset
+# set -o pipefail
+# set -o xtrace
 
 # Require environment variables.
 if [ -z "${SUBSPACE_HTTP_HOST-}" ]; then
@@ -75,10 +75,10 @@ if [ "$SUBSPACE_IPV6_NAT_ENABLED" == "0" ] && [ "$SUBSPACE_IPV4_NAT_ENABLED" == 
   exit 1
 fi
 
-# Empty out inherited nameservers
-echo "" > /etc/resolv.conf
-# Set DNS servers
-echo ${SUBSPACE_NAMESERVERS} | tr "," "\n" | while read -r ns; do echo "nameserver ${ns}" >>/etc/resolv.conf; done
+## Empty out inherited nameservers
+#echo "" > /etc/resolv.conf
+## Set DNS servers
+#echo ${SUBSPACE_NAMESERVERS} | tr "," "\n" | while read -r ns; do echo "nameserver ${ns}" >>/etc/resolv.conf; done
 
 if [ -z "${SUBSPACE_DISABLE_MASQUERADE-}" ]; then
   if [[ ${SUBSPACE_IPV4_NAT_ENABLED} -ne 0 ]]; then
