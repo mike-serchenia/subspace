@@ -18,7 +18,7 @@ ENV GODEBUG="netdns=go http2server=0"
 
 RUN make build BUILD_VERSION=${BUILD_VERSION}
 
-FROM ubuntu:20.04
+FROM alpine:3.13.4
 LABEL maintainer="github.com/subspacecommunity/subspace"
 
 COPY --from=build  /src/subspace /usr/bin/subspace
@@ -29,15 +29,14 @@ ENV DEBIAN_FRONTEND noninteractive
 
 RUN chmod +x /usr/bin/subspace /usr/local/bin/entrypoint.sh /sbin/my_init
 
-RUN apt update \
-    && apt install --no-install-recommends -y \
+RUN apk add --no-cache \
     iproute2 \
     iptables \
+    ip6tables \
     dnsmasq \
     socat  \
-    wireguard \
-    runit \
-    && apt-get clean
+    wireguard-tools \
+    runit
 
 ENTRYPOINT ["/usr/local/bin/entrypoint.sh" ]
 

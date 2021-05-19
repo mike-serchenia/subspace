@@ -1,8 +1,8 @@
-#!/usr/bin/env bash
-# set -o errexit
-# set -o nounset
-# set -o pipefail
-# set -o xtrace
+#!/usr/bin/env sh
+set -o errexit
+set -o nounset
+set -o pipefail
+set -o xtrace
 
 # Require environment variables.
 if [ -z "${SUBSPACE_HTTP_HOST-}" ]; then
