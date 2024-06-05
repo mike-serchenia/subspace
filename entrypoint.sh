@@ -219,7 +219,7 @@ if ! test -d /etc/service/subspace; then
   cat <<RUNIT >/etc/service/subspace/run
 #!/bin/sh
 source /etc/envvars
-exec /usr/bin/subspace -debug \
+exec /usr/bin/subspace \
     "--http-host=${SUBSPACE_HTTP_HOST}" \
     "--http-addr=${SUBSPACE_HTTP_ADDR}" \
     "--http-insecure=${SUBSPACE_HTTP_INSECURE}" \
