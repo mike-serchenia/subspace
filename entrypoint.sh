@@ -69,23 +69,16 @@ else
   export SUBSPACE_IPV4_NAT_ENABLED=0
 fi
 
-# DNS server is disabled if the flag is not ommited and set to anything other than 0.
-if ! [ -z "${SUBSPACE_DISABLE_DNS-}" ] && [ "${SUBSPACE_DISABLE_DNS}" != "0" ]; then
-  export SUBSPACE_DISABLE_DNS=1
-else
-  export SUBSPACE_DISABLE_DNS=0
-fi
-
 if [ "$SUBSPACE_IPV6_NAT_ENABLED" == "0" ] && [ "$SUBSPACE_IPV4_NAT_ENABLED" == "0" ]; then
   echo "One of envionment variables SUBSPACE_IPV6_NAT_ENABLED, SUBSPACE_IPV4_NAT_ENABLED must be set to 1."
   echo "Got SUBSPACE_IPV6_NAT_ENABLED=$SUBSPACE_IPV6_NAT_ENABLED, SUBSPACE_IPV4_NAT_ENABLED=$SUBSPACE_IPV4_NAT_ENABLED"
   exit 1
 fi
 
-# Empty out inherited nameservers
-echo "" >/etc/resolv.conf
-# Set DNS servers
-echo ${SUBSPACE_NAMESERVERS} | tr "," "\n" | while read -r ns; do echo "nameserver ${ns}" >>/etc/resolv.conf; done
+## Empty out inherited nameservers
+#echo "" > /etc/resolv.conf
+## Set DNS servers
+#echo ${SUBSPACE_NAMESERVERS} | tr "," "\n" | while read -r ns; do echo "nameserver ${ns}" >>/etc/resolv.conf; done
 
 if [ -z "${SUBSPACE_DISABLE_MASQUERADE-}" ]; then
   if [[ ${SUBSPACE_IPV4_NAT_ENABLED} -ne 0 ]]; then
@@ -155,7 +148,7 @@ if ! test -d /data/wireguard; then
   touch peers/null.conf # So you can cat *.conf safely
 
   # Generate public/private server keys.
-  wg genkey | tee server.private | wg pubkey >server.public
+  wg genkey | tee server.private | wg pubkey > server.public
 fi
 
 cat <<WGSERVER >/data/wireguard/server.conf
@@ -184,17 +177,16 @@ wg setconf wg0 /data/wireguard/server.conf
 ip link set wg0 up
 
 # dnsmasq service
-if [[ ${SUBSPACE_DISABLE_DNS} == "0" ]]; then
-  DNSMASQ_LISTEN_ADDRESS="127.0.0.1"
-  if [[ ${SUBSPACE_IPV4_NAT_ENABLED} -ne 0 ]]; then
-    DNSMASQ_LISTEN_ADDRESS="${DNSMASQ_LISTEN_ADDRESS},${SUBSPACE_IPV4_GW}"
-  fi
-  if [[ ${SUBSPACE_IPV6_NAT_ENABLED} -ne 0 ]]; then
-    DNSMASQ_LISTEN_ADDRESS="${DNSMASQ_LISTEN_ADDRESS},${SUBSPACE_IPV6_GW}"
-  fi
+DNSMASQ_LISTEN_ADDRESS="127.0.0.1"
+if [[ ${SUBSPACE_IPV4_NAT_ENABLED} -ne 0 ]]; then
+  DNSMASQ_LISTEN_ADDRESS="${DNSMASQ_LISTEN_ADDRESS},${SUBSPACE_IPV4_GW}"
+fi
+if [[ ${SUBSPACE_IPV6_NAT_ENABLED} -ne 0 ]]; then
+  DNSMASQ_LISTEN_ADDRESS="${DNSMASQ_LISTEN_ADDRESS},${SUBSPACE_IPV6_GW}"
+fi
 
-  if ! test -d /etc/service/dnsmasq; then
-    cat <<DNSMASQ >/etc/dnsmasq.conf
+if ! test -d /etc/service/dnsmasq; then
+  cat <<DNSMASQ >/etc/dnsmasq.conf
     # Only listen on necessary addresses.
     listen-address=${DNSMASQ_LISTEN_ADDRESS}
 
@@ -203,26 +195,22 @@ if [[ ${SUBSPACE_DISABLE_DNS} == "0" ]]; then
 
     # Never forward addresses in the non-routed address spaces.
     bogus-priv
-    
-    # Allow extending dnsmasq by providing custom configurations.
-    conf-dir=/etc/dnsmasq.d
 DNSMASQ
 
-    mkdir -p /etc/service/dnsmasq
-    cat <<RUNIT >/etc/service/dnsmasq/run
+  mkdir -p /etc/service/dnsmasq
+  cat <<RUNIT >/etc/service/dnsmasq/run
 #!/bin/sh
-exec /usr/sbin/dnsmasq --keep-in-foreground
+exec /usr/sbin/dnsmasq --no-daemon
 RUNIT
-    chmod +x /etc/service/dnsmasq/run
+  chmod +x /etc/service/dnsmasq/run
 
-    # dnsmasq service log
-    mkdir -p /etc/service/dnsmasq/log/main
-    cat <<RUNIT >/etc/service/dnsmasq/log/run
+  # dnsmasq service log
+  mkdir -p /etc/service/dnsmasq/log/main
+  cat <<RUNIT >/etc/service/dnsmasq/log/run
 #!/bin/sh
 exec svlogd -tt ./main
 RUNIT
-    chmod +x /etc/service/dnsmasq/log/run
-  fi
+  chmod +x /etc/service/dnsmasq/log/run
 fi
 
 # subspace service
@@ -231,7 +219,7 @@ if ! test -d /etc/service/subspace; then
   cat <<RUNIT >/etc/service/subspace/run
 #!/bin/sh
 source /etc/envvars
-exec /usr/bin/subspace \
+exec /usr/bin/subspace -debug \
     "--http-host=${SUBSPACE_HTTP_HOST}" \
     "--http-addr=${SUBSPACE_HTTP_ADDR}" \
     "--http-insecure=${SUBSPACE_HTTP_INSECURE}" \

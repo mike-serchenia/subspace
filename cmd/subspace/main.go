@@ -99,9 +99,10 @@ func init() {
 }
 
 func main() {
-	var err error
-
-	cli.Parse(os.Args[1:])
+	err := cli.Parse(os.Args[1:])
+	if err != nil {
+		logger.Warn("error parsing flags: ", err)
+	}
 	usage := func(msg string) {
 		if msg != "" {
 			fmt.Fprintf(os.Stderr, "ERROR: %s\n", msg)
@@ -390,9 +391,6 @@ func configureSAML() error {
 		Certificate:       keyPair.Leaf,
 		IDPMetadata:       entity,
 		CookieName:        SessionCookieNameSSO,
-		CookieDomain:      httpHost, // TODO: this will break if using a custom domain.
-		CookieSecure:      !httpInsecure,
-		Logger:            logger,
 		AllowIDPInitiated: true,
 	})
 	if err != nil {

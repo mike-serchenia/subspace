@@ -4,7 +4,6 @@ import (
 	"bytes"
 	"fmt"
 	"image/png"
-	"io/ioutil"
 	"net/http"
 	"os"
 	"regexp"
@@ -47,7 +46,6 @@ func ssoHandler(w http.ResponseWriter, r *http.Request, _ httprouter.Params) {
 
 	logger.Debugf("SSO: unable to get session")
 	samlSP.OnError(w, r, err)
-	return
 }
 
 // Handles the SAML part separately from sign in
@@ -72,7 +70,7 @@ func wireguardQRConfigHandler(w *Web) {
 		return
 	}
 
-	b, err := ioutil.ReadFile(profile.WireGuardConfigPath())
+	b, err := os.ReadFile(profile.WireGuardConfigPath())
 	if err != nil {
 		Error(w.w, err)
 		return
@@ -103,7 +101,7 @@ func wireguardConfigHandler(w *Web) {
 		return
 	}
 
-	b, err := ioutil.ReadFile(profile.WireGuardConfigPath())
+	b, err := os.ReadFile(profile.WireGuardConfigPath())
 	if err != nil {
 		Error(w.w, err)
 		return
@@ -143,12 +141,16 @@ func configureHandler(w *Web) {
 		w.Redirect("/forgot?error=bcrypt")
 		return
 	}
-	config.UpdateInfo(func(i *Info) error {
+	err = config.UpdateInfo(func(i *Info) error {
 		i.Email = email
 		i.Password = hashedPassword
 		i.Configured = true
 		return nil
 	})
+	if err != nil {
+		w.Redirect("/configure?error=invalid")
+		return
+	}
 
 	if err := w.SigninSession(true, ""); err != nil {
 		Error(w.w, err)
@@ -189,12 +191,16 @@ func forgotHandler(w *Web) {
 		secret = config.FindInfo().Secret
 		if secret == "" {
 			secret = RandomString(32)
-			config.UpdateInfo(func(i *Info) error {
+			err := config.UpdateInfo(func(i *Info) error {
 				if i.Secret == "" {
 					i.Secret = secret
 				}
 				return nil
 			})
+			if err != nil {
+				w.Redirect("/configure?error=invalid")
+				return
+			}
 		}
 
 		go func() {
@@ -217,11 +223,15 @@ func forgotHandler(w *Web) {
 		w.Redirect("/forgot?error=bcrypt")
 		return
 	}
-	config.UpdateInfo(func(i *Info) error {
+	err = config.UpdateInfo(func(i *Info) error {
 		i.Password = hashedPassword
 		i.Secret = ""
 		return nil
 	})
+	if err != nil {
+		w.Redirect("/configure?error=invalid")
+		return
+	}
 
 	if err := w.SigninSession(true, ""); err != nil {
 		Error(w.w, err)
@@ -288,7 +298,11 @@ func totpQRHandler(w *Web) {
 		return
 	}
 
-	png.Encode(&buf, img)
+	err = png.Encode(&buf, img)
+	if err != nil {
+		Error(w.w, err)
+		return
+	}
 
 	w.w.Header().Set("Content-Type", "image/png")
 	w.w.Header().Set("Content-Length", fmt.Sprintf("%d", len(buf.Bytes())))
@@ -328,11 +342,14 @@ func userEditHandler(w *Web) {
 
 	admin := w.r.FormValue("admin") == "yes"
 
-	config.UpdateUser(user.ID, func(u *User) error {
+	err = config.UpdateUser(user.ID, func(u *User) error {
 		u.Admin = admin
 		return nil
 	})
-
+	if err != nil {
+		w.Redirect("/configure?error=invalid")
+		return
+	}
 	w.Redirect("/user/edit/%s?success=edituser", user.ID)
 }
 
@@ -497,20 +514,20 @@ PersistentKeepalive = {{$.PersistentKeepalive}}
 WGCLIENT
 `
 	_, err = bash(script, struct {
-		Profile      		Profile
-		EndpointHost 		string
-		Datadir      		string
-		IPv4Gw       		string
-		IPv6Gw       		string
-		IPv4Pref     		string
-		IPv6Pref     		string
-		IPv4Cidr     		string
-		IPv6Cidr     		string
-		Listenport   		string
-		AllowedIPS   		string
-		Ipv4Enabled  		bool
-		Ipv6Enabled  		bool
-		DisableDNS   		bool
+		Profile             Profile
+		EndpointHost        string
+		Datadir             string
+		IPv4Gw              string
+		IPv6Gw              string
+		IPv4Pref            string
+		IPv6Pref            string
+		IPv4Cidr            string
+		IPv6Cidr            string
+		Listenport          string
+		AllowedIPS          string
+		Ipv4Enabled         bool
+		Ipv6Enabled         bool
+		DisableDNS          bool
 		PersistentKeepalive string
 	}{
 		profile,
@@ -620,11 +637,15 @@ func settingsHandler(w *Web) {
 	resetTotp := w.r.FormValue("reset_totp")
 	totpCode := w.r.FormValue("totp_code")
 
-	config.UpdateInfo(func(i *Info) error {
+	err := config.UpdateInfo(func(i *Info) error {
 		i.SAML.IDPMetadata = samlMetadata
 		i.Email = email
 		return nil
 	})
+	if err != nil {
+		w.Redirect("/configure?error=invalid")
+		return
+	}
 
 	// Configure SAML if metadata is present.
 	if len(samlMetadata) > 0 {
@@ -653,10 +674,14 @@ func settingsHandler(w *Web) {
 			return
 		}
 
-		config.UpdateInfo(func(i *Info) error {
+		err = config.UpdateInfo(func(i *Info) error {
 			i.Password = hashedPassword
 			return nil
 		})
+		if err != nil {
+			w.Redirect("/configure?error=invalid")
+			return
+		}
 	}
 
 	if resetTotp == "true" {
@@ -686,9 +711,7 @@ func helpHandler(w *Web) {
 	w.HTML()
 }
 
-//
 // Helpers
-//
 func deleteProfile(profile Profile) error {
 	script := `
 # WireGuard

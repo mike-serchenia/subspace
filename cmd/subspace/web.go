@@ -16,6 +16,8 @@ import (
 	"github.com/pquerna/otp"
 
 	"golang.org/x/net/publicsuffix"
+	"golang.org/x/text/cases"
+	"golang.org/x/text/language"
 
 	humanize "github.com/dustin/go-humanize"
 	httprouter "github.com/julienschmidt/httprouter"
@@ -106,7 +108,7 @@ func (w *Web) HTML() {
 			if icann {
 				suffix = "." + suffix
 			}
-			return strings.Title(strings.TrimSuffix(domain, suffix))
+			return cases.Title(language.English).String(strings.TrimSuffix(domain, suffix))
 		},
 	})
 
@@ -200,11 +202,11 @@ func WebHandler(h func(*Web), section string) httprouter.Handle {
 			}
 
 			if session != nil {
-				r = r.WithContext(samlsp.ContextWithSession(r.Context(), session))
+				web.r = r.WithContext(samlsp.ContextWithSession(r.Context(), session))
 				jwtSessionClaims, ok := session.(samlsp.JWTSessionClaims)
 
 				if !ok {
-					Error(w, fmt.Errorf("Unable to decode session into JWTSessionClaims"))
+					Error(w, fmt.Errorf("unable to decode session into JWTSessionClaims"))
 					return
 				}
 
