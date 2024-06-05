@@ -14,7 +14,7 @@ import (
 )
 
 func init() {
-	rand.Seed(time.Now().Unix())
+	rand.New(rand.NewSource(time.Now().UnixNano()))
 }
 
 type Mailer struct{}

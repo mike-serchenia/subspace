@@ -1,14 +1,17 @@
 package main
 
 import (
+	"bytes"
 	"fmt"
-	"io/ioutil"
+	"image/png"
 	"net/http"
 	"os"
 	"regexp"
 	"strings"
 
+	"github.com/crewjam/saml/samlsp"
 	"github.com/julienschmidt/httprouter"
+	"github.com/pquerna/otp/totp"
 	"golang.org/x/crypto/bcrypt"
 
 	qrcode "github.com/skip2/go-qrcode"
@@ -21,22 +24,24 @@ var (
 	maxProfiles   = 250
 )
 
-func getEnv(key, fallback string) string {
-	if value, ok := os.LookupEnv(key); ok {
-		return value
-	}
-	return fallback
-}
-
+// Handles the sign in part separately from the SAML
 func ssoHandler(w http.ResponseWriter, r *http.Request, _ httprouter.Params) {
-	if token := samlSP.GetAuthorizationToken(r); token != nil {
+	session, err := samlSP.Session.GetSession(r)
+	if session != nil {
 		http.Redirect(w, r, "/", http.StatusFound)
 		return
 	}
-	logger.Debugf("SSO: require account handler")
-	samlSP.RequireAccountHandler(w, r)
+	if err == samlsp.ErrNoSession {
+		logger.Debugf("SSO: HandleStartAuthFlow")
+		samlSP.HandleStartAuthFlow(w, r)
+		return
+	}
+
+	logger.Debugf("SSO: unable to get session")
+	samlSP.OnError(w, r, err)
 }
 
+// Handles the SAML part separately from sign in
 func samlHandler(w http.ResponseWriter, r *http.Request, _ httprouter.Params) {
 	if samlSP == nil {
 		logger.Warnf("SAML is not configured")
@@ -58,7 +63,7 @@ func wireguardQRConfigHandler(w *Web) {
 		return
 	}
 
-	b, err := ioutil.ReadFile(profile.WireGuardConfigPath())
+	b, err := os.ReadFile(profile.WireGuardConfigPath())
 	if err != nil {
 		Error(w.w, err)
 		return
@@ -89,7 +94,7 @@ func wireguardConfigHandler(w *Web) {
 		return
 	}
 
-	b, err := ioutil.ReadFile(profile.WireGuardConfigPath())
+	b, err := os.ReadFile(profile.WireGuardConfigPath())
 	if err != nil {
 		Error(w.w, err)
 		return
@@ -129,12 +134,16 @@ func configureHandler(w *Web) {
 		w.Redirect("/forgot?error=bcrypt")
 		return
 	}
-	config.UpdateInfo(func(i *Info) error {
+	err = config.UpdateInfo(func(i *Info) error {
 		i.Email = email
 		i.Password = hashedPassword
 		i.Configured = true
 		return nil
 	})
+	if err != nil {
+		w.Redirect("/configure?error=invalid")
+		return
+	}
 
 	if err := w.SigninSession(true, ""); err != nil {
 		Error(w.w, err)
@@ -175,12 +184,16 @@ func forgotHandler(w *Web) {
 		secret = config.FindInfo().Secret
 		if secret == "" {
 			secret = RandomString(32)
-			config.UpdateInfo(func(i *Info) error {
+			err := config.UpdateInfo(func(i *Info) error {
 				if i.Secret == "" {
 					i.Secret = secret
 				}
 				return nil
 			})
+			if err != nil {
+				w.Redirect("/configure?error=invalid")
+				return
+			}
 		}
 
 		go func() {
@@ -203,11 +216,15 @@ func forgotHandler(w *Web) {
 		w.Redirect("/forgot?error=bcrypt")
 		return
 	}
-	config.UpdateInfo(func(i *Info) error {
+	err = config.UpdateInfo(func(i *Info) error {
 		i.Password = hashedPassword
 		i.Secret = ""
 		return nil
 	})
+	if err != nil {
+		w.Redirect("/configure?error=invalid")
+		return
+	}
 
 	if err := w.SigninSession(true, ""); err != nil {
 		Error(w.w, err)
@@ -229,6 +246,7 @@ func signinHandler(w *Web) {
 
 	email := strings.ToLower(strings.TrimSpace(w.r.FormValue("email")))
 	password := w.r.FormValue("password")
+	passcode := w.r.FormValue("totp")
 
 	if email != config.FindInfo().Email {
 		w.Redirect("/signin?error=invalid")
@@ -239,12 +257,53 @@ func signinHandler(w *Web) {
 		w.Redirect("/signin?error=invalid")
 		return
 	}
+
+	if config.FindInfo().TotpKey != "" && !totp.Validate(passcode, config.FindInfo().TotpKey) {
+		// Totp has been configured and the provided code doesn't match
+		w.Redirect("/signin?error=invalid")
+		return
+	}
+
 	if err := w.SigninSession(true, ""); err != nil {
 		Error(w.w, err)
 		return
 	}
 
 	w.Redirect("/")
+}
+
+func totpQRHandler(w *Web) {
+	if !w.Admin {
+		Error(w.w, fmt.Errorf("failed to view config: permission denied"))
+		return
+	}
+
+	if config.Info.TotpKey != "" {
+		// TOTP is already configured, don't allow the current one to be leaked
+		w.Redirect("/")
+		return
+	}
+
+	var buf bytes.Buffer
+	img, err := tempTotpKey.Image(200, 200)
+	if err != nil {
+		Error(w.w, err)
+		return
+	}
+
+	err = png.Encode(&buf, img)
+	if err != nil {
+		Error(w.w, err)
+		return
+	}
+
+	w.w.Header().Set("Content-Type", "image/png")
+	w.w.Header().Set("Content-Length", fmt.Sprintf("%d", len(buf.Bytes())))
+	if _, err := w.w.Write(buf.Bytes()); err != nil {
+		Error(w.w, err)
+		return
+	}
+
 }
 
 func userEditHandler(w *Web) {
@@ -276,11 +335,14 @@ func userEditHandler(w *Web) {
 
 	admin := w.r.FormValue("admin") == "yes"
 
-	config.UpdateUser(user.ID, func(u *User) error {
+	err = config.UpdateUser(user.ID, func(u *User) error {
 		u.Admin = admin
 		return nil
 	})
-
+	if err != nil {
+		w.Redirect("/configure?error=invalid")
+		return
+	}
 	w.Redirect("/user/edit/%s?success=edituser", user.ID)
 }
 
@@ -362,50 +424,19 @@ func profileAddHandler(w *Web) {
 		return
 	}
 
-	ipv4Pref := "10.99.97."
-	if pref := getEnv("SUBSPACE_IPV4_PREF", "nil"); pref != "nil" {
-		ipv4Pref = pref
-	}
-	ipv4Gw := "10.99.97.1"
-	if gw := getEnv("SUBSPACE_IPV4_GW", "nil"); gw != "nil" {
-		ipv4Gw = gw
-	}
-	ipv4Cidr := "24"
-	if cidr := getEnv("SUBSPACE_IPV4_CIDR", "nil"); cidr != "nil" {
-		ipv4Cidr = cidr
-	}
-	ipv6Pref := "fd00::10:97:"
-	if pref := getEnv("SUBSPACE_IPV6_PREF", "nil"); pref != "nil" {
-		ipv6Pref = pref
-	}
-	ipv6Gw := "fd00::10:97:1"
-	if gw := getEnv("SUBSPACE_IPV6_GW", "nil"); gw != "nil" {
-		ipv6Gw = gw
-	}
-	ipv6Cidr := "64"
-	if cidr := getEnv("SUBSPACE_IPV6_CIDR", "nil"); cidr != "nil" {
-		ipv6Cidr = cidr
-	}
-	listenport := "51820"
-	if port := getEnv("SUBSPACE_LISTENPORT", "nil"); port != "nil" {
-		listenport = port
-	}
-	endpointHost := httpHost
-	if eh := getEnv("SUBSPACE_ENDPOINT_HOST", "nil"); eh != "nil" {
-		endpointHost = eh
-	}
-	allowedips := "0.0.0.0/0, ::/0"
-	if ips := getEnv("SUBSPACE_ALLOWED_IPS", "nil"); ips != "nil" {
-		allowedips = ips
-	}
-	ipv4Enabled := true
-	if enable := getEnv("SUBSPACE_IPV4_NAT_ENABLED", "1"); enable == "0" {
-		ipv4Enabled = false
-	}
-	ipv6Enabled := true
-	if enable := getEnv("SUBSPACE_IPV6_NAT_ENABLED", "1"); enable == "0" {
-		ipv6Enabled = false
-	}
+	ipv4Pref := getEnv("SUBSPACE_IPV4_PREF", "10.99.97.")
+	ipv4Gw := getEnv("SUBSPACE_IPV4_GW", "10.99.97.1")
+	ipv4Cidr := getEnv("SUBSPACE_IPV4_CIDR", "24")
+	ipv6Pref := getEnv("SUBSPACE_IPV6_PREF", "fd00::10:97:")
+	ipv6Gw := getEnv("SUBSPACE_IPV6_GW", "fd00::10:97:1")
+	ipv6Cidr := getEnv("SUBSPACE_IPV6_CIDR", "64")
+	listenport := getEnv("SUBSPACE_LISTENPORT", "51820")
+	endpointHost := getEnv("SUBSPACE_ENDPOINT_HOST", httpHost)
+	allowedips := getEnv("SUBSPACE_ALLOWED_IPS", "0.0.0.0/0, ::/0")
+	ipv4Enabled := getEnvAsBool("SUBSPACE_IPV4_NAT_ENABLED", true)
+	ipv6Enabled := getEnvAsBool("SUBSPACE_IPV6_NAT_ENABLED", true)
+	disableDNS := getEnvAsBool("SUBSPACE_DISABLE_DNS", false)
+	persistentKeepalive := getEnv("SUBSPACE_PERSISTENT_KEEPALIVE", "0")
 
 	script := `
 cd {{$.Datadir}}/wireguard
@@ -423,7 +454,9 @@ WGPEER
 cat <<WGCLIENT >clients/{{$.Profile.ID}}.conf
 [Interface]
 PrivateKey = ${wg_private_key}
+{{- if not .DisableDNS }}
 DNS = {{if .Ipv4Enabled}}{{$.IPv4Gw}}{{end}}{{if .Ipv6Enabled}}{{if .Ipv4Enabled}},{{end}}{{$.IPv6Gw}}{{end}}
+{{- end }}
 Address = {{if .Ipv4Enabled}}{{$.IPv4Pref}}{{$.Profile.Number}}/{{$.IPv4Cidr}}{{end}}{{if .Ipv6Enabled}}{{if .Ipv4Enabled}},{{end}}{{$.IPv6Pref}}{{$.Profile.Number}}/{{$.IPv6Cidr}}{{end}}
 MTU = 1280
 
@@ -432,22 +465,25 @@ PublicKey = $(cat server.public)
 
 Endpoint = {{$.EndpointHost}}:{{$.Listenport}}
 AllowedIPs = {{$.AllowedIPS}}
+PersistentKeepalive = {{$.PersistentKeepalive}}
 WGCLIENT
 `
 	_, err = bash(script, struct {
-		Profile      Profile
-		EndpointHost string
-		Datadir      string
-		IPv4Gw       string
-		IPv6Gw       string
-		IPv4Pref     string
-		IPv6Pref     string
-		IPv4Cidr     string
-		IPv6Cidr     string
-		Listenport   string
-		AllowedIPS   string
-		Ipv4Enabled  bool
-		Ipv6Enabled  bool
+		Profile             Profile
+		EndpointHost        string
+		Datadir             string
+		IPv4Gw              string
+		IPv6Gw              string
+		IPv4Pref            string
+		IPv6Pref            string
+		IPv4Cidr            string
+		IPv6Cidr            string
+		Listenport          string
+		AllowedIPS          string
+		Ipv4Enabled         bool
+		Ipv6Enabled         bool
+		DisableDNS          bool
+		PersistentKeepalive string
 	}{
 		profile,
 		endpointHost,
@@ -462,12 +498,17 @@ WGCLIENT
 		allowedips,
 		ipv4Enabled,
 		ipv6Enabled,
+		disableDNS,
+		persistentKeepalive,
 	})
 	if err != nil {
 		logger.Warn(err)
 		f, _ := os.Create("/tmp/error.txt")
 		errstr := fmt.Sprintln(err)
-		f.WriteString(errstr)
+		_, err = f.WriteString(errstr)
+		if err != nil {
+			logger.Warn(err)
+		}
 		w.Redirect("/?error=addprofile")
 		return
 	}
@@ -551,11 +592,18 @@ func settingsHandler(w *Web) {
 	currentPassword := w.r.FormValue("current_password")
 	newPassword := w.r.FormValue("new_password")
 
-	config.UpdateInfo(func(i *Info) error {
+	resetTotp := w.r.FormValue("reset_totp")
+	totpCode := w.r.FormValue("totp_code")
+
+	err := config.UpdateInfo(func(i *Info) error {
 		i.SAML.IDPMetadata = samlMetadata
 		i.Email = email
 		return nil
 	})
+	if err != nil {
+		w.Redirect("/configure?error=invalid")
+		return
+	}
 
 	// Configure SAML if metadata is present.
 	if len(samlMetadata) > 0 {
@@ -584,10 +632,39 @@ func settingsHandler(w *Web) {
 			return
 		}
 
-		config.UpdateInfo(func(i *Info) error {
+		err = config.UpdateInfo(func(i *Info) error {
 			i.Password = hashedPassword
 			return nil
 		})
+		if err != nil {
+			w.Redirect("/configure?error=invalid")
+			return
+		}
+	}
+
+	if resetTotp == "true" {
+		err := config.ResetTotp()
+		if err != nil {
+			w.Redirect("/settings?error=totp")
+			return
+		}
+
+		w.Redirect("/settings?success=totp")
+		return
+	}
+
+	if config.Info.TotpKey == "" && totpCode != "" {
+		if !totp.Validate(totpCode, tempTotpKey.Secret()) {
+			w.Redirect("/settings?error=totp")
+			return
+		}
+		config.Info.TotpKey = tempTotpKey.Secret()
+		err = config.save()
+		if err != nil {
+			logger.Warnf("failed to save totp key: %s", err)
+			w.Redirect("/settings?error=totp")
+			return
+		}
 	}
 
 	w.Redirect("/settings?success=settings")
@@ -597,9 +674,7 @@ func helpHandler(w *Web) {
 	w.HTML()
 }
 
-//
 // Helpers
-//
 func deleteProfile(profile Profile) error {
 	script := `
 # WireGuard

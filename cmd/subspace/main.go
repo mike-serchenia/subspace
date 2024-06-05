@@ -18,6 +18,7 @@ import (
 	"time"
 
 	"github.com/julienschmidt/httprouter"
+	"github.com/pquerna/otp"
 
 	"github.com/crewjam/saml"
 	"github.com/crewjam/saml/samlsp"
@@ -79,6 +80,9 @@ var (
 
 	// theme
 	semanticTheme string
+
+	// Totp
+	tempTotpKey *otp.Key
 )
 
 func init() {
@@ -95,9 +99,10 @@ func init() {
 }
 
 func main() {
-	var err error
-
-	cli.Parse(os.Args[1:])
+	err := cli.Parse(os.Args[1:])
+	if err != nil {
+		logger.Warn("error parsing flags: ", err)
+	}
 	usage := func(msg string) {
 		if msg != "" {
 			fmt.Fprintf(os.Stderr, "ERROR: %s\n", msg)
@@ -144,6 +149,12 @@ func main() {
 		logger.Fatal(err)
 	}
 
+	// TOTP
+	err = config.GenerateTOTP()
+	if err != nil {
+		logger.Fatal(err)
+	}
+
 	// Secure token
 	securetoken = securecookie.New([]byte(config.FindInfo().HashKey), []byte(config.FindInfo().BlockKey))
 
@@ -170,6 +181,7 @@ func main() {
 	r.GET("/saml/acs", Log(samlHandler))
 	r.POST("/saml/acs", Log(samlHandler))
 
+	r.GET("/totp/image", Log(WebHandler(totpQRHandler, "totp/image")))
 	r.GET("/signin", Log(WebHandler(signinHandler, "signin")))
 	r.GET("/signout", Log(WebHandler(signoutHandler, "signout")))
 	r.POST("/signin", Log(WebHandler(signinHandler, "signin")))
@@ -321,8 +333,14 @@ func (l tcpKeepAliveListener) Accept() (c net.Conn, err error) {
 	if err != nil {
 		return
 	}
-	tc.SetKeepAlive(true)
-	tc.SetKeepAlivePeriod(10 * time.Minute)
+	err = tc.SetKeepAlive(true)
+	if err != nil {
+		logger.Warn("failed to set keep alive: ", err)
+	}
+	err = tc.SetKeepAlivePeriod(10 * time.Minute)
+	if err != nil {
+		logger.Warn("failed to set keep alive period: ", err)
+	}
 	return tc, nil
 }
 
@@ -379,9 +397,6 @@ func configureSAML() error {
 		Certificate:       keyPair.Leaf,
 		IDPMetadata:       entity,
 		CookieName:        SessionCookieNameSSO,
-		CookieDomain:      httpHost, // TODO: this will break if using a custom domain.
-		CookieSecure:      !httpInsecure,
-		Logger:            logger,
 		AllowIDPInitiated: true,
 	})
 	if err != nil {

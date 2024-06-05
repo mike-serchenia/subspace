@@ -13,8 +13,11 @@ import (
 
 	"github.com/crewjam/saml"
 	"github.com/crewjam/saml/samlsp"
+	"github.com/pquerna/otp"
 
 	"golang.org/x/net/publicsuffix"
+	"golang.org/x/text/cases"
+	"golang.org/x/text/language"
 
 	humanize "github.com/dustin/go-humanize"
 	httprouter "github.com/julienschmidt/httprouter"
@@ -58,6 +61,7 @@ type Web struct {
 	TargetProfiles []Profile
 
 	SemanticTheme string
+	TempTotpKey   *otp.Key
 }
 
 func init() {
@@ -104,7 +108,7 @@ func (w *Web) HTML() {
 			if icann {
 				suffix = "." + suffix
 			}
-			return strings.Title(strings.TrimSuffix(domain, suffix))
+			return cases.Title(language.English).String(strings.TrimSuffix(domain, suffix))
 		},
 	})
 
@@ -159,6 +163,7 @@ func WebHandler(h func(*Web), section string) httprouter.Handle {
 			Info:          config.FindInfo(),
 			SAML:          samlSP,
 			SemanticTheme: semanticTheme,
+			TempTotpKey:   tempTotpKey,
 		}
 
 		if section == "signin" || section == "forgot" || section == "configure" {
@@ -190,10 +195,22 @@ func WebHandler(h func(*Web), section string) httprouter.Handle {
 
 		// Needs a new session.
 		if samlSP != nil {
-			if token := samlSP.GetAuthorizationToken(r); token != nil {
-				r = r.WithContext(samlsp.WithToken(r.Context(), token))
+			session, err := samlSP.Session.GetSession(r)
 
-				email := token.StandardClaims.Subject
+			if err != nil {
+				logger.Debugf("SAML: Unable to get session from requests: %+v", err)
+			}
+
+			if session != nil {
+				web.r = r.WithContext(samlsp.ContextWithSession(r.Context(), session))
+				jwtSessionClaims, ok := session.(samlsp.JWTSessionClaims)
+
+				if !ok {
+					Error(w, fmt.Errorf("unable to decode session into JWTSessionClaims"))
+					return
+				}
+
+				email := jwtSessionClaims.Subject
 				if email == "" {
 					Error(w, fmt.Errorf("SAML token missing email"))
 					return
