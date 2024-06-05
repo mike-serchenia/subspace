@@ -333,8 +333,14 @@ func (l tcpKeepAliveListener) Accept() (c net.Conn, err error) {
 	if err != nil {
 		return
 	}
-	tc.SetKeepAlive(true)
-	tc.SetKeepAlivePeriod(10 * time.Minute)
+	err = tc.SetKeepAlive(true)
+	if err != nil {
+		logger.Warn("failed to set keep alive: ", err)
+	}
+	err = tc.SetKeepAlivePeriod(10 * time.Minute)
+	if err != nil {
+		logger.Warn("failed to set keep alive period: ", err)
+	}
 	return tc, nil
 }
 

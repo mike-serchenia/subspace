@@ -550,7 +550,10 @@ WGCLIENT
 		logger.Warn(err)
 		f, _ := os.Create("/tmp/error.txt")
 		errstr := fmt.Sprintln(err)
-		f.WriteString(errstr)
+		_, err = f.WriteString(errstr)
+		if err != nil {
+			logger.Warn(err)
+		}
 		w.Redirect("/?error=addprofile")
 		return
 	}
@@ -701,7 +704,12 @@ func settingsHandler(w *Web) {
 			return
 		}
 		config.Info.TotpKey = tempTotpKey.Secret()
-		config.save()
+		err = config.save()
+		if err != nil {
+			logger.Warnf("failed to save totp key: %s", err)
+			w.Redirect("/settings?error=totp")
+			return
+		}
 	}
 
 	w.Redirect("/settings?success=settings")
