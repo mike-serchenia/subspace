@@ -24,13 +24,6 @@ var (
 	maxProfiles   = 250
 )
 
-func getEnv(key, fallback string) string {
-	if value, ok := os.LookupEnv(key); ok {
-		return value
-	}
-	return fallback
-}
-
 // Handles the sign in part separately from the SAML
 func ssoHandler(w http.ResponseWriter, r *http.Request, _ httprouter.Params) {
 	session, err := samlSP.Session.GetSession(r)
@@ -431,58 +424,19 @@ func profileAddHandler(w *Web) {
 		return
 	}
 
-	ipv4Pref := "10.99.97."
-	if pref := getEnv("SUBSPACE_IPV4_PREF", "nil"); pref != "nil" {
-		ipv4Pref = pref
-	}
-	ipv4Gw := "10.99.97.1"
-	if gw := getEnv("SUBSPACE_IPV4_GW", "nil"); gw != "nil" {
-		ipv4Gw = gw
-	}
-	ipv4Cidr := "24"
-	if cidr := getEnv("SUBSPACE_IPV4_CIDR", "nil"); cidr != "nil" {
-		ipv4Cidr = cidr
-	}
-	ipv6Pref := "fd00::10:97:"
-	if pref := getEnv("SUBSPACE_IPV6_PREF", "nil"); pref != "nil" {
-		ipv6Pref = pref
-	}
-	ipv6Gw := "fd00::10:97:1"
-	if gw := getEnv("SUBSPACE_IPV6_GW", "nil"); gw != "nil" {
-		ipv6Gw = gw
-	}
-	ipv6Cidr := "64"
-	if cidr := getEnv("SUBSPACE_IPV6_CIDR", "nil"); cidr != "nil" {
-		ipv6Cidr = cidr
-	}
-	listenport := "51820"
-	if port := getEnv("SUBSPACE_LISTENPORT", "nil"); port != "nil" {
-		listenport = port
-	}
-	endpointHost := httpHost
-	if eh := getEnv("SUBSPACE_ENDPOINT_HOST", "nil"); eh != "nil" {
-		endpointHost = eh
-	}
-	allowedips := "0.0.0.0/0, ::/0"
-	if ips := getEnv("SUBSPACE_ALLOWED_IPS", "nil"); ips != "nil" {
-		allowedips = ips
-	}
-	ipv4Enabled := true
-	if enable := getEnv("SUBSPACE_IPV4_NAT_ENABLED", "1"); enable == "0" {
-		ipv4Enabled = false
-	}
-	ipv6Enabled := true
-	if enable := getEnv("SUBSPACE_IPV6_NAT_ENABLED", "1"); enable == "0" {
-		ipv6Enabled = false
-	}
-	disableDNS := false
-	if shouldDisableDNS := getEnv("SUBSPACE_DISABLE_DNS", "0"); shouldDisableDNS == "1" {
-		disableDNS = true
-	}
-	persistentKeepalive := "0"
-	if keepalive := getEnv("SUBSPACE_PERSISTENT_KEEPALIVE", "nil"); keepalive != "nil" {
-		persistentKeepalive = keepalive
-	}
+	ipv4Pref := getEnv("SUBSPACE_IPV4_PREF", "10.99.97.")
+	ipv4Gw := getEnv("SUBSPACE_IPV4_GW", "10.99.97.1")
+	ipv4Cidr := getEnv("SUBSPACE_IPV4_CIDR", "24")
+	ipv6Pref := getEnv("SUBSPACE_IPV6_PREF", "fd00::10:97:")
+	ipv6Gw := getEnv("SUBSPACE_IPV6_GW", "fd00::10:97:1")
+	ipv6Cidr := getEnv("SUBSPACE_IPV6_CIDR", "64")
+	listenport := getEnv("SUBSPACE_LISTENPORT", "51820")
+	endpointHost := getEnv("SUBSPACE_ENDPOINT_HOST", httpHost)
+	allowedips := getEnv("SUBSPACE_ALLOWED_IPS", "0.0.0.0/0, ::/0")
+	ipv4Enabled := getEnvAsBool("SUBSPACE_IPV4_NAT_ENABLED", true)
+	ipv6Enabled := getEnvAsBool("SUBSPACE_IPV6_NAT_ENABLED", true)
+	disableDNS := getEnvAsBool("SUBSPACE_DISABLE_DNS", false)
+	persistentKeepalive := getEnv("SUBSPACE_PERSISTENT_KEEPALIVE", "0")
 
 	script := `
 cd {{$.Datadir}}/wireguard
