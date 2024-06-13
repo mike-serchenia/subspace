@@ -266,7 +266,7 @@ func signinHandler(w *Web) {
 		return
 	}
 
-	if err := w.SigninSession(true, "adm"); err != nil {
+	if err := w.SigninSession(true, ""); err != nil {
 		Error(w.w, err)
 		return
 	}
