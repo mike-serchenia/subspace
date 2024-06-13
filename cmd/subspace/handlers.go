@@ -8,6 +8,7 @@ import (
 	"os"
 	"regexp"
 	"strings"
+	"time"
 
 	"github.com/crewjam/saml/samlsp"
 	"github.com/julienschmidt/httprouter"
@@ -254,6 +255,7 @@ func signinHandler(w *Web) {
 	}
 
 	if err := bcrypt.CompareHashAndPassword(config.FindInfo().Password, []byte(password)); err != nil {
+		time.Sleep(3 * time.Second) // Prevent brute force
 		w.Redirect("/signin?error=invalid")
 		return
 	}
@@ -264,7 +266,7 @@ func signinHandler(w *Web) {
 		return
 	}
 
-	if err := w.SigninSession(true, ""); err != nil {
+	if err := w.SigninSession(true, "adm"); err != nil {
 		Error(w.w, err)
 		return
 	}
